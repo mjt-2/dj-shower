@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DJ $hower – Stage 0 Test</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px 40px;
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0e1116; color: #e8eaed;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #9aa0a6; font-size: 14px; margin: 0 0 18px; }
+  .card { background: #171b22; border: 1px solid #262c36; border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; color: #c3c7cc; font-weight: 600; }
+  ol { margin: 0; padding-left: 20px; }
+  ol li { margin-bottom: 6px; }
+  button {
+    width: 100%; padding: 16px; font-size: 18px; font-weight: 600;
+    border: 0; border-radius: 12px; background: #1db954; color: #04130a;
+    margin-bottom: 10px;
+  }
+  button.secondary { background: #2a313c; color: #e8eaed; font-size: 15px; padding: 12px; }
+  button:disabled { opacity: .45; }
+  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #222832; font-size: 15px; }
+  .row:last-child { border-bottom: 0; }
+  .row span:last-child { font-weight: 600; text-align: right; }
+  .ok { color: #1db954; } .bad { color: #ff6b6b; } .warn { color: #f5c542; }
+  .meter { height: 26px; background: #0b0e12; border-radius: 8px; overflow: hidden; border: 1px solid #262c36; }
+  .meter > div { height: 100%; width: 0%; background: linear-gradient(90deg,#1db954,#f5c542,#ff6b6b); transition: width 60ms linear; }
+  label { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 15px; }
+  input[type=checkbox] { width: 20px; height: 20px; }
+  #log {
+    font: 12px/1.45 ui-monospace, Menlo, monospace; color: #b8bec6;
+    max-height: 260px; overflow-y: auto; white-space: pre-wrap; margin: 0;
+  }
+</style>
+</head>
+<body>
+  <h1>DJ $hower: Stage 0 test</h1>
+  <p class="sub">Does the mic keep listening while Spotify keeps playing?</p>
+
+  <div class="card">
+    <h2>How to test</h2>
+    <ol>
+      <li>Start a song in the Spotify app, at normal volume.</li>
+      <li>Come back to this page in Safari and tap <b>Start mic</b>. Allow mic access.</li>
+      <li>Watch and listen: does the music <b>pause</b>, <b>get quieter</b>, or <b>sound worse</b>?</li>
+      <li>Talk or clap. The green bar should jump.</li>
+      <li>Leave the phone down for 5 minutes, screen on. Check that the bar still moves.</li>
+      <li>Tap <b>Copy results</b> and paste them to Claude.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Mic settings (try both if the first run fails)</h2>
+    <label><input type="checkbox" id="optNoise" checked> Noise suppression</label>
+    <label><input type="checkbox" id="optEcho" checked> Echo cancellation</label>
+    <label><input type="checkbox" id="optWake" checked> Keep screen awake</label>
+  </div>
+
+  <button id="startBtn">Start mic</button>
+  <button id="stopBtn" class="secondary" disabled>Stop mic</button>
+
+  <div class="card">
+    <h2>Live mic level</h2>
+    <div class="meter"><div id="meterFill"></div></div>
+    <div class="row"><span>Current level</span><span id="levelTxt">–</span></div>
+    <div class="row"><span>Loudest so far</span><span id="peakTxt">–</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Status</h2>
+    <div class="row"><span>Mic</span><span id="micStatus">off</span></div>
+    <div class="row"><span>Mic track muted by iOS?</span><span id="mutedStatus">–</span></div>
+    <div class="row"><span>Screen awake lock</span><span id="wakeStatus">–</span></div>
+    <div class="row"><span>Running for</span><span id="runTime">–</span></div>
+    <div class="row"><span>Seconds with sound heard</span><span id="heardTime">–</span></div>
+    <div class="row"><span>Times iOS muted the mic</span><span id="muteCount">0</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Your answers (the important part)</h2>
+    <label><input type="checkbox" id="qPaused"> Music paused when mic started</label>
+    <label><input type="checkbox" id="qQuieter"> Music got quieter</label>
+    <label><input type="checkbox" id="qWorse"> Music sounded worse (tinny/crackly)</label>
+    <label><input type="checkbox" id="qResumed"> If it paused, pressing play again kept it playing</label>
+    <label><input type="checkbox" id="qBar"> Bar still moved after 5 min</label>
+  </div>
+
+  <button id="copyBtn" class="secondary">Copy results</button>
+
+  <div class="card">
+    <h2>Event log</h2>
+    <pre id="log"></pre>
+  </div>
+
+<script>
+// Small helper so we don't keep writing document.getElementById.
+const $ = (id) => document.getElementById(id);
+
+// Everything we learn goes into this log, so the results can be copied and pasted.
+const t0 = performance.now();
+function log(msg) {
+  const secs = ((performance.now() - t0) / 1000).toFixed(1).padStart(6, " ");
+  $("log").textContent += `[${secs}s] ${msg}\n`;
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+// State for one test run.
+let stream = null, track = null, audioCtx = null, analyser = null;
+let wakeLock = null, rafId = null, tickId = null;
+let startedAt = 0, heardSeconds = 0, peak = 0, muteCount = 0;
+
+// Note the device up front, since iOS behaviour changes between versions.
+log(`Device: ${navigator.userAgent}`);
+log(`Mic API available: ${!!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)}`);
+log(`Wake Lock API available: ${"wakeLock" in navigator}`);
+log(`Secure (HTTPS) page: ${window.isSecureContext}`);
+
+function setStatus(id, text, cls) {
+  const el = $(id);
+  el.textContent = text;
+  el.className = cls || "";
+}
+
+// Keep the screen on. iOS drops the lock when the page is hidden,
+// so we ask for it again when the page comes back.
+async function requestWake() {
+  if (!$("optWake").checked) { setStatus("wakeStatus", "not requested"); return; }
+  if (!("wakeLock" in navigator)) { setStatus("wakeStatus", "not supported", "bad"); log("Wake lock not supported"); return; }
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    setStatus("wakeStatus", "on", "ok");
+    log("Wake lock: ON");
+    wakeLock.addEventListener("release", () => {
+      setStatus("wakeStatus", "released", "warn");
+      log("Wake lock: released");
+    });
+  } catch (e) {
+    setStatus("wakeStatus", "failed", "bad");
+    log(`Wake lock failed: ${e.name}: ${e.message}`);
+  }
+}
+
+async function start() {
+  $("startBtn").disabled = true;
+  const constraints = {
+    audio: {
+      noiseSuppression: $("optNoise").checked,
+      echoCancellation: $("optEcho").checked,
+      autoGainControl: true,
+    },
+  };
+  log(`Requesting mic with ${JSON.stringify(constraints.audio)}`);
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (e) {
+    setStatus("micStatus", "denied / failed", "bad");
+    log(`getUserMedia FAILED: ${e.name}: ${e.message}`);
+    $("startBtn").disabled = false;
+    return;
+  }
+
+  track = stream.getAudioTracks()[0];
+  log(`Mic ON: "${track.label}"`);
+  try { log(`Mic settings applied: ${JSON.stringify(track.getSettings())}`); } catch (_) {}
+  setStatus("micStatus", "listening", "ok");
+  setStatus("mutedStatus", track.muted ? "YES" : "no", track.muted ? "bad" : "ok");
+
+  // This is the big one: if Spotify playing makes iOS mute our mic, these fire.
+  track.onmute = () => {
+    muteCount++; $("muteCount").textContent = muteCount;
+    setStatus("mutedStatus", "YES", "bad");
+    log("⚠️ iOS MUTED the mic track");
+  };
+  track.onunmute = () => {
+    setStatus("mutedStatus", "no", "ok");
+    log("Mic track unmuted");
+  };
+  track.onended = () => {
+    setStatus("micStatus", "ended by iOS", "bad");
+    log("⚠️ Mic track ENDED (iOS took the mic away)");
+  };
+
+  // Hook the mic up to an analyser so we can draw a live level bar.
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx = ctx;
+  log(`AudioContext state: ${ctx.state}`);
+  // Use the local `ctx` here, because audioCtx is set to null when the user taps Stop.
+  ctx.onstatechange = () => log(`AudioContext state -> ${ctx.state}`);
+  if (audioCtx.state === "suspended") await audioCtx.resume();
+  const source = audioCtx.createMediaStreamSource(stream);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 1024;
+  source.connect(analyser);
+  // Note: we deliberately do NOT connect to audioCtx.destination,
+  // so the page never plays sound itself (that could pause Spotify for a different reason).
+
+  await requestWake();
+
+  startedAt = performance.now();
+  heardSeconds = 0; peak = 0;
+  drawMeter();
+  tickId = setInterval(tick, 1000);
+  $("stopBtn").disabled = false;
+}
+
+// Turn raw mic samples into a 0-100 loudness number.
+const buf = new Float32Array(1024);
+let lastLevel = 0;
+function drawMeter() {
+  analyser.getFloatTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  const rms = Math.sqrt(sum / buf.length);
+  // Log scale so quiet speech still shows up on the bar.
+  const db = 20 * Math.log10(rms + 1e-8);          // about -80 (silence) to 0 (very loud)
+  const level = Math.max(0, Math.min(100, (db + 70) * (100 / 70)));
+  lastLevel = level;
+  $("meterFill").style.width = level + "%";
+  $("levelTxt").textContent = Math.round(level);
+  if (level > peak) { peak = level; $("peakTxt").textContent = Math.round(peak); }
+  rafId = requestAnimationFrame(drawMeter);
+}
+
+// Once a second: update timers, and note whether we heard anything at all.
+function tick() {
+  const running = Math.round((performance.now() - startedAt) / 1000);
+  $("runTime").textContent = `${Math.floor(running / 60)}m ${running % 60}s`;
+  if (lastLevel > 5) heardSeconds++;
+  $("heardTime").textContent = heardSeconds;
+  // Every 30s write a heartbeat, so the log shows if the mic went silent partway through.
+  if (running % 30 === 0) log(`Heartbeat: level=${Math.round(lastLevel)} muted=${track && track.muted} state=${track && track.readyState} ctx=${audioCtx && audioCtx.state}`);
+}
+
+function stop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  if (tickId) clearInterval(tickId);
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  if (audioCtx) audioCtx.close();
+  if (wakeLock) wakeLock.release().catch(() => {});
+  stream = track = audioCtx = analyser = wakeLock = null;
+  setStatus("micStatus", "off");
+  $("meterFill").style.width = "0%";
+  $("startBtn").disabled = false;
+  $("stopBtn").disabled = true;
+  log("Mic stopped by user");
+}
+
+// Log when the page is hidden or shown, and get the screen lock back on return.
+document.addEventListener("visibilitychange", () => {
+  log(`Page ${document.hidden ? "HIDDEN (left Safari / screen locked)" : "VISIBLE again"}`);
+  if (!document.hidden && stream && $("optWake").checked) requestWake();
+});
+
+// Build a plain-text summary to paste back to Claude.
+async function copyResults() {
+  const q = (id) => ($(id).checked ? "YES" : "no");
+  const text = [
+    "DJ $hower Stage 0 results",
+    `Music paused when mic started: ${q("qPaused")}`,
+    `Music got quieter: ${q("qQuieter")}`,
+    `Music sounded worse: ${q("qWorse")}`,
+    `Pressing play again kept it playing: ${q("qResumed")}`,
+    `Bar still moved after 5 min: ${q("qBar")}`,
+    `Run time: ${$("runTime").textContent}, heard sound for ${$("heardTime").textContent}s, peak ${$("peakTxt").textContent}`,
+    `iOS muted the mic ${muteCount} time(s)`,
+    `Settings: noise=${$("optNoise").checked} echo=${$("optEcho").checked} wake=${$("optWake").checked}`,
+    "",
+    "Log:",
+    $("log").textContent,
+  ].join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    $("copyBtn").textContent = "Copied ✓";
+  } catch (_) {
+    // Clipboard can be blocked; fall back to selecting the log so it can be copied by hand.
+    $("copyBtn").textContent = "Copy failed. Long-press the log to copy";
+  }
+  setTimeout(() => ($("copyBtn").textContent = "Copy results"), 2500);
+}
+
+$("startBtn").onclick = start;
+$("stopBtn").onclick = stop;
+$("copyBtn").onclick = copyResults;
+</script>
+</body>
+</html>
